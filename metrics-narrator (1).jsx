@@ -49,9 +49,9 @@ const MAX_INPUT_LENGTH = 3000;
 const MIN_CLARIFICATION_LENGTH = 10;
 
 // --- UI copy ---
-const TOOL_NAME = "Metrics Narrator";
+const TOOL_NAME = "MetaMetrics";
 const TOOL_TAGLINE = "Turn raw metrics into executive-ready stories.";
-const TOOL_EYEBROW = "Portfolio Tool · Working Name";
+const TOOL_EYEBROW = "AI Portfolio Tool";
 
 const INPUT_PLACEHOLDER = `Paste your metrics here in any format. Examples:
 
@@ -231,30 +231,31 @@ const ERROR_MESSAGES = {
 // ============================================================
 
 const STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400;1,500&display=swap');
 
   /* ---- Design tokens ---- */
   :root {
-    --bg:             #0C0C0F;
-    --surface:        #13131A;
-    --surface-raised: #1A1A24;
-    --border:         #252535;
-    --border-subtle:  #1E1E2A;
-    --accent:         #C9A96E;
-    --accent-dim:     #6B4F28;
-    --accent-glow:    rgba(201, 169, 110, 0.07);
-    --text-primary:   #EDE8DF;
-    --text-secondary: #857E99;
-    --text-muted:     #44405A;
-    --error:          #D96B6B;
-    --error-bg:       rgba(217, 107, 107, 0.06);
-    --error-border:   rgba(217, 107, 107, 0.25);
-    --success:        #6BB89A;
+    --bg:             #F4F0E4;
+    --surface:        #EAE6D9;
+    --surface-raised: #E1DDD0;
+    --border:         #CEC9BA;
+    --border-subtle:  #DBD7CB;
+    --accent:         #44A194;
+    --accent-dim:     #537D96;
+    --accent-hover:   #338078;
+    --accent-glow:    rgba(68, 161, 148, 0.09);
+    --text-primary:   #1E2D2B;
+    --text-secondary: #4A6360;
+    --text-muted:     #8A9B99;
+    --error:          #C96E6C;
+    --error-bg:       rgba(236, 143, 141, 0.10);
+    --error-border:   rgba(236, 143, 141, 0.35);
+    --success:        #44A194;
     --radius-sm:      6px;
     --radius:         10px;
     --radius-lg:      14px;
-    --font-display:   'Cormorant Garamond', Georgia, serif;
-    --font-body:      'DM Sans', system-ui, sans-serif;
+    --font-display:   'Ubuntu', sans-serif;
+    --font-body:      'Ubuntu', sans-serif;
     --transition:     0.2s ease;
   }
 
@@ -268,6 +269,17 @@ const STYLES = `
     line-height: 1.6;
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Gradient top border (visual family marker, matches Kontxt) ---- */
+  .gradient-top-border {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(to right, #44A194, #537D96);
+    z-index: 100;
   }
 
   /* ---- Layout shell ---- */
@@ -293,7 +305,7 @@ const STYLES = `
     font-weight: 500;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--accent-dim);
     margin-bottom: 14px;
   }
 
@@ -307,9 +319,8 @@ const STYLES = `
     letter-spacing: -0.01em;
   }
 
-  /* Italic accent word in the title */
+  /* Accent word in the title */
   .header-title em {
-    font-style: italic;
     color: var(--accent);
   }
 
@@ -434,7 +445,7 @@ const STYLES = `
     gap: 8px;
     padding: 13px 26px;
     background: var(--accent);
-    color: #0C0C0F;
+    color: #F4F0E4;
     border: none;
     border-radius: var(--radius);
     font-family: var(--font-body);
@@ -442,10 +453,10 @@ const STYLES = `
     font-weight: 500;
     letter-spacing: 0.03em;
     cursor: pointer;
-    transition: opacity var(--transition), transform 0.1s ease;
+    transition: background var(--transition), transform 0.1s ease;
   }
   .btn-primary:hover:not(:disabled) {
-    opacity: 0.85;
+    background: var(--accent-hover);
     transform: translateY(-1px);
   }
   .btn-primary:active:not(:disabled) { transform: translateY(0); }
@@ -507,10 +518,9 @@ const STYLES = `
   }
   .clarify-question:last-child { border-bottom: none; }
 
-  /* Italic serif ordinal number for each question */
+  /* Ordinal number for each question */
   .q-number {
     font-family: var(--font-display);
-    font-style: italic;
     color: var(--accent);
     font-size: 18px;
     line-height: 1.2;
@@ -564,10 +574,9 @@ const STYLES = `
     margin-bottom: 6px;
   }
 
-  /* Large italic serif ordinal for visual character */
+  /* Large ordinal for visual character */
   .card-number {
     font-family: var(--font-display);
-    font-style: italic;
     font-size: 32px;
     color: var(--accent-dim);
     line-height: 1;
@@ -745,7 +754,7 @@ function ResultCard({ index, number, title, description, content }) {
 // SECTION 6: MAIN COMPONENT
 // ============================================================
 
-export default function MetricsNarrator() {
+export default function MetaMetrics() {
 
   // ----------------------------------------------------------
   // STATE
@@ -931,17 +940,20 @@ export default function MetricsNarrator() {
     <>
       <style>{STYLES}</style>
 
+      {/* Gradient top border — caramel to burnt orange, matches Kontxt visual family */}
+      <div className="gradient-top-border" aria-hidden="true" />
+
       <div className="app">
 
         {/* ---- DECORATIVE ACCENT BAR ---- */}
-        {/* Small gold bar above the header for visual anchoring */}
+        {/* Small bar above the header for visual anchoring */}
         <div className="accent-bar" aria-hidden="true" />
 
         {/* ---- HEADER ---- */}
         <header className="header">
           <p className="header-eyebrow">{TOOL_EYEBROW}</p>
           <h1 className="header-title">
-            Metrics <em>Narrator</em>
+            Meta<span style={{color: "var(--accent)"}}>Metrics</span>
           </h1>
           <p className="header-tagline">{TOOL_TAGLINE}</p>
         </header>
