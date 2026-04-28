@@ -6,11 +6,11 @@
  * business metrics into an executive-ready narrative.
  *
  * Architecture overview:
- *  - State machine with 5 states: idle | loading | clarifying | result | error
- *  - Two-step AI pipeline: interpretability check → full analysis
- *  - Maximum one clarification round enforced (guardrail)
- *  - All AI instructions live in named constant strings (not inline)
- *  - Zero assumptions policy enforced via system prompt
+ * - State machine with 5 states: idle | loading | clarifying | result | error
+ * - Two-step AI pipeline: interpretability check → full analysis
+ * - Maximum one clarification round enforced (guardrail)
+ * - All AI instructions live in named constant strings (not inline)
+ * - Zero assumptions policy enforced via system prompt
  *
  * Author: Built with Claude (Anthropic)
  * ============================================================
@@ -29,7 +29,7 @@ import { useState, useRef } from "react";
 
 /**
  * Minimum character count before the Analyze button activates.
- * 30 chars is roughly "DAU: 5,000, WAU: 20,000" — the smallest
+ * 30 chars is roughly "DAU: 5,000, WAU: 20,000" -  the smallest
  * meaningful metrics input. Below this, output quality is too low.
  */
 const MIN_INPUT_LENGTH = 30;
@@ -106,6 +106,269 @@ const OUTPUT_SECTIONS = [
   },
 ];
 
+// --- Simple language output section definitions ---
+// Mirrors OUTPUT_SECTIONS exactly in structure.
+// Keys map to the plain-language fields in the analysis JSON.
+// Shown when the user switches to the "The Simple Read" tab.
+const SIMPLE_SECTIONS = [
+  {
+    key: "simpleSummary",
+    title: "What's Happening",
+    description: "The same analysis, written in plain everyday language.",
+  },
+  {
+    key: "simpleAnomalies",
+    title: "Things That Look Off",
+    description: "Unusual patterns and flags, explained simply.",
+  },
+  {
+    key: "simpleHypotheses",
+    title: "Questions Worth Asking",
+    description: "What to investigate next, in plain terms.",
+  },
+];
+
+// ============================================================
+// SECTION 1B: TEST CASES
+// 16 test cases covering the full range of input complexity.
+// Used to validate prompts against edge cases during development.
+// These are not rendered in production UI -  for dev reference only.
+//
+// Expected output fields per test:
+//   Executive tab:  narrative | anomalies | hypotheses
+//   Simple tab:     simpleSummary | simpleAnomalies | simpleHypotheses
+//
+// Both sets must carry identical analysis. Vocabulary differs.
+// High-risk cases (riskLevel: "HIGH") are priority validation targets.
+// ============================================================
+
+const TEST_CASES = [
+  {
+    id: "T09",
+    label: "Cohort-Based Retention Breakdown",
+    category: "Retention segmented by acquisition cohorts",
+    input: `January cohort:
+  D1: 68%  D7: 44%  D30: 29%
+
+February cohort:
+  D1: 63%  D7: 39%  D30: 21%
+
+March cohort:
+  D1: 71%  D7: 47%  D30: 33%
+
+Primary acquisition channels:
+  Organic: 52%  Paid ads: 34%  Referrals: 14%`,
+  },
+  {
+    id: "T10",
+    label: "Feature Usage Funnel Drop-off",
+    category: "Product funnel analysis",
+    input: `Feature: Report Builder Funnel
+
+Step 1: Open feature → 18,200 users
+Step 2: Add data source → 12,900 users
+Step 3: Apply filters → 7,400 users
+Step 4: Generate report → 3,200 users
+Step 5: Export report → 1,050 users
+
+Avg time to complete flow: 4m 20s
+Error rate at export step: 12%`,
+  },
+  {
+    id: "T11",
+    label: "Time-Series Volatility (Weekly Data)",
+    category: "Trend + fluctuation detection",
+    input: `Weekly DAU:
+Week 1: 21,400  Week 2: 22,100  Week 3: 19,300  Week 4: 24,800
+
+Crash rate:
+Week 1: 0.9%  Week 2: 1.1%  Week 3: 2.8%  Week 4: 1.0%
+
+App releases:
+Week 3 included major backend migration`,
+  },
+  {
+    id: "T12",
+    label: "Engagement Depth Metrics",
+    category: "Quality of engagement, not just volume",
+    input: `DAU: 52,000
+Avg sessions per user per day: 1.3
+Avg session duration: 2m 10s
+Screens per session: 3.1
+
+Power users (5+ sessions/day): 4.5%
+Users with <1 min sessions: 38%
+
+Previous month:
+Avg session duration: 3m 40s`,
+  },
+  {
+    id: "T13",
+    label: "Customer Support Burden vs Product Usage",
+    category: "Operational + experience metrics",
+    input: `MAU: 210,000 (up from 180,000)
+
+Support tickets:
+  Total: 4,200
+  Bug-related: 2,600
+  How-to queries: 1,100
+  Billing: 500
+
+First response time: 9 hours (previously 4 hours)
+Resolution time: 36 hours (previously 18 hours)
+
+CSAT: 3.6 / 5 (previously 4.3)`,
+  },
+  {
+    id: "T14",
+    label: "Negative Growth with Positive Sentiment",
+    category: "Conflicting behavioral vs sentiment signals",
+    riskLevel: "HIGH",
+    input: `DAU: 18,200 (down from 24,500)
+MAU: 72,000 (down from 91,000)
+
+NPS: 58 (up from 41)
+
+Feature adoption (new dashboard): 62% of active users
+Churn rate: 6.8% (previously 4.2%)`,
+  },
+  {
+    id: "T15",
+    label: "Data Quality Issues (Incomplete + Missing Values)",
+    category: "Partial dataset",
+    riskLevel: "HIGH",
+    input: `DAU: 14,200
+MAU: 
+Retention:
+  D1: 59%
+  D7:
+  D30: 18%
+
+Revenue: $82,000
+Churn rate:
+
+Notes: Tracking pipeline had outages for 3 days this month`,
+  },
+  {
+    id: "T16",
+    label: "Outlier Spike Event",
+    category: "One-time spike detection",
+    input: `Daily signups (last 7 days):
+Day 1: 1,200  Day 2: 1,340  Day 3: 1,290
+Day 4: 8,900  Day 5: 1,410  Day 6: 1,360  Day 7: 1,280
+
+Referral traffic:
+Day 4 spiked to 6,500 users
+
+Campaign: Influencer collaboration launched on Day 4`,
+  },
+  {
+    id: "T17",
+    label: "Multi-Product Comparison",
+    category: "Portfolio-level metrics",
+    input: `Product A:
+  MAU: 120,000  D30 retention: 28%  NPS: 44
+
+Product B:
+  MAU: 75,000  D30 retention: 41%  NPS: 61
+
+Product C:
+  MAU: 210,000  D30 retention: 19%  NPS: 32`,
+  },
+  {
+    id: "T18",
+    label: "Activation Metrics (Early Lifecycle)",
+    category: "Onboarding effectiveness",
+    input: `New users this month: 32,000
+
+Activation steps:
+  Account created: 32,000
+  Profile completed: 21,500
+  First key action completed: 14,200
+  Returned next day: 9,800
+
+Time to first action (median): 11 minutes
+Drop-off highest between profile completion and first action`,
+  },
+  {
+    id: "T19",
+    label: "Monetization Efficiency vs Acquisition Cost",
+    category: "Unit economics stress test",
+    input: `CAC: $72  LTV: $95  Payback period: 11 months
+
+Previous quarter:
+CAC: $54  LTV: $110  Payback period: 7 months
+
+Conversion rate: 4.1% (down from 5.6%)`,
+  },
+  {
+    id: "T20",
+    label: "Platform Reliability Impact",
+    category: "Infra + product experience linkage",
+    input: `Uptime: 96.2% (previously 99.1%)
+Avg API latency: 780 ms (previously 320 ms)
+
+DAU: 44,000 (down from 51,000)
+Session drop-offs: 22% (previously 11%)
+
+Error rate: 5.6% (previously 1.9%)`,
+  },
+  {
+    id: "T21",
+    label: "Geographic Segmentation",
+    category: "Regional performance differences",
+    input: `India:
+  MAU: 82,000  D30 retention: 26%
+
+US:
+  MAU: 54,000  D30 retention: 38%
+
+Europe:
+  MAU: 31,000  D30 retention: 21%
+
+Rest of world:
+  MAU: 19,000  D30 retention: 17%`,
+  },
+  {
+    id: "T22",
+    label: "Silent Risk (Lagging Indicator Problem)",
+    category: "Metrics look good but leading indicators weak",
+    riskLevel: "HIGH",
+    input: `Revenue: $420,000 (up 18% MoM)
+MAU: 160,000 (flat)
+
+New user signups: 9,200 (down from 14,500)
+D1 retention: 48% (down from 61%)
+
+Feature engagement (core feature): 22% (down from 35%)`,
+  },
+  {
+    id: "T23",
+    label: "Behavioral Segmentation (User Personas)",
+    category: "Different user groups behaving differently",
+    input: `Casual users:
+  % of base: 64%  Avg session duration: 1m 40s  Retention D30: 12%
+
+Core users:
+  % of base: 28%  Avg session duration: 7m 10s  Retention D30: 46%
+
+Power users:
+  % of base: 8%  Avg session duration: 18m 30s  Retention D30: 71%`,
+  },
+  {
+    id: "T24",
+    label: "Long-Term Decline Hidden by Short-Term Growth",
+    category: "Misleading trend interpretation",
+    riskLevel: "HIGH",
+    input: `Last 6 months MAU:
+Month 1: 180,000  Month 2: 172,000  Month 3: 165,000
+Month 4: 158,000  Month 5: 150,000  Month 6: 162,000
+
+Last month growth driven by paid acquisition spike
+Organic traffic down 22% over 6 months`,
+  },
+];
+
 // ============================================================
 // SECTION 2: AI SYSTEM PROMPTS
 // Every instruction to the model lives here as a named constant.
@@ -132,21 +395,21 @@ const INTERPRETABILITY_SYSTEM_PROMPT = `You are a strict input validator for a b
 
 Your ONLY job is to determine whether the user's input can be meaningfully interpreted as business metrics data.
 
-RULES — follow all of them without exception:
+RULES -  follow all of them without exception:
 1. Return ONLY valid JSON. No preamble, no markdown, no backticks, no explanation outside the JSON.
 2. Set "interpretable" to true if the input contains at least ONE of the following:
-   - A named metric with a value (e.g., "DAU: 5000", "churn rate 3.2%")
-   - A clear directional business statement (e.g., "revenue grew 20% last quarter")
-   - Any numeric data labeled with a business context
+  - A named metric with a value (e.g., "DAU: 5000", "churn rate 3.2%")
+  - A clear directional business statement (e.g., "revenue grew 20% last quarter")
+  - Any numeric data labeled with a business context
 3. Set "interpretable" to false if the input:
-   - Is a single number without any context
-   - Contains no identifiable business metrics
-   - Is entirely vague (e.g., "things look good", "numbers are up")
-   - Is off-topic (e.g., a question, a poem, a personal message)
+  - Is a single number without any context
+  - Contains no identifiable business metrics
+  - Is entirely vague (e.g., "things look good", "numbers are up")
+  - Is off-topic (e.g., a question, a poem, a personal message)
 4. If "interpretable" is false, provide specific and actionable clarifying questions.
-   - Questions must directly address what is MISSING from the input
-   - Do NOT ask generic questions like "can you provide more details?"
-   - Maximum 4 questions, minimum 1
+  - Questions must directly address what is MISSING from the input
+  - Do NOT ask generic questions like "can you provide more details?"
+  - Maximum 4 questions, minimum 1
 5. If "interpretable" is true, "clarifyingQuestions" must be an empty array.
 
 Return this exact JSON structure and nothing else:
@@ -158,23 +421,30 @@ Return this exact JSON structure and nothing else:
 /**
  * STEP 2 PROMPT: Full Metrics Analysis
  *
- * PURPOSE: Generate a structured three-part executive briefing
- * from interpretable metrics data.
+ * PURPOSE: Generate a structured six-part briefing from interpretable
+ * metrics data. Three sections for an executive audience, three for a
+ * general/plain-language audience. Both sets carry identical analysis - 
+ * only vocabulary and register differ.
  *
  * GUARDRAILS IMPLEMENTED:
  * - No external benchmarking without user-provided comparison data
  * - No invented numbers or assumed business context
  * - Anomalies only flagged when baseline data is present
  * - Contradictions flagged explicitly, never silently resolved
- * - Narrative written for non-technical executive audience
+ * - Missing/blank values named explicitly, never inferred
+ * - Leading indicators take precedence over lagging when conflicting
+ * - Single-period reversals in sustained trends not called recoveries
+ * - Simple version must match exec version in findings -  no additions or omissions
  *
  * OUTPUT FORMAT: Strict JSON only. Parsed client-side.
+ * NOTE: max_tokens set to 1500 to accommodate six output fields.
  */
-const ANALYSIS_SYSTEM_PROMPT = `You are a senior data analyst preparing a metrics briefing for a board or executive audience.
+const ANALYSIS_SYSTEM_PROMPT = `You are a senior data analyst preparing a metrics briefing for two audiences simultaneously.
 
-Analyze the provided business metrics and return a structured JSON response.
+Analyze the provided business metrics and return a structured JSON response with SIX fields:
+three for an executive audience and three in plain everyday language.
 
-STRICT RULES — violating any of these makes the output unreliable:
+STRICT RULES -  violating any of these makes the output unreliable:
 1. Return ONLY valid JSON. No preamble, no markdown, no backticks.
 2. NEVER invent, assume, or extrapolate any metric not explicitly present in the input.
 3. NEVER benchmark against external industry data unless the user has provided comparison figures in their input.
@@ -183,16 +453,38 @@ STRICT RULES — violating any of these makes the output unreliable:
    "Anomaly detection requires at least two time periods. Only a single data point was provided."
 5. If two metrics appear contradictory (e.g., high churn AND high retention simultaneously),
    flag the contradiction explicitly in the anomalies section. Do NOT silently resolve it.
-6. Write the narrative in plain, confident language suitable for a non-technical executive.
-   Avoid jargon. Lead with the most important insight.
+6. Write the executive fields (narrative, anomalies, hypotheses) in confident, precise language
+   suitable for a board or executive audience. Avoid unnecessary jargon but do not simplify.
 7. Each hypothesis must be directly grounded in at least one metric from the input.
    Do not generate hypotheses that have no basis in the provided data.
+8. MISSING OR BLANK VALUES: If the input contains metric labels with no value (e.g., "MAU:", "Churn rate:"),
+   list each missing metric explicitly in the anomalies section. State that analysis for those metrics
+   is incomplete and cannot be performed. Do not estimate or infer missing values.
+9. LEADING VS LAGGING INDICATORS: If lagging indicators (revenue, MAU, total users) appear positive
+   while leading indicators (new signups, D1 retention, feature engagement, conversion rate) are
+   simultaneously declining, lead the narrative with the leading indicator risk. A healthy lagging
+   metric today does not offset deteriorating leading metrics -  flag this as a forward risk.
+10. TREND VS SPIKE: When a multi-period dataset shows a sustained directional trend followed by a
+    single-period reversal, do not characterize the reversal as a trend change. Identify it as a
+    potential one-off event. If the input names a cause (e.g., paid acquisition spike, campaign),
+    include that in the anomalies section and note it does not confirm sustained recovery.
+11. PLAIN LANGUAGE CONSISTENCY: The three simple fields (simpleSummary, simpleAnomalies, simpleHypotheses)
+    must convey exactly the same findings as their executive counterparts. No finding may appear in one
+    version that is absent from the other. The only difference is vocabulary and sentence structure.
+    Write the simple fields as if explaining to a smart colleague who does not work in data or product.
+    Use short sentences. Avoid terms like "cohort", "D1 retention", "lagging indicator" -  explain
+    the concept in plain words instead. Do not use bullet points in either version.
+12. EM DASHES BANNED: Do not use em dashes (—) anywhere in any output field. Use a comma, period,
+    colon, or rewrite the sentence instead.
 
 Return this exact JSON structure and nothing else:
 {
-  "narrative": "3 to 5 sentences. Executive summary of what the metrics collectively say. Lead with the most significant signal.",
-  "anomalies": "Specific flags, contradictions, or data quality issues found. If none are detectable OR if data is insufficient to identify any, state that explicitly and explain why.",
-  "hypotheses": "2 to 4 specific hypotheses worth investigating. Each must reference the metric(s) that prompted it."
+  "narrative": "3 to 5 sentences. Executive summary for a board audience. Lead with the most significant signal.",
+  "anomalies": "Executive-register flags, contradictions, and data quality issues.",
+  "hypotheses": "2 to 4 executive-register hypotheses, each grounded in a specific metric.",
+  "simpleSummary": "3 to 5 sentences. Same analysis as narrative but in plain, simple language. No jargon.",
+  "simpleAnomalies": "Same flags as anomalies but explained simply, as if to someone unfamiliar with data terms.",
+  "simpleHypotheses": "Same hypotheses as the executive version but phrased as plain, everyday questions."
 }`;
 
 // --- User-facing error messages ---
@@ -217,7 +509,7 @@ const ERROR_MESSAGES = {
    * and gives the user a concrete example of what to provide.
    */
   secondClarification:
-    "We were still unable to interpret your input after clarification. Please provide at least one metric name and a corresponding value — for example: \"DAU: 5,000\" or \"Monthly revenue: $120,000\".",
+    "We were still unable to interpret your input after clarification. Please provide at least one metric name and a corresponding value -  for example: \"DAU: 5,000\" or \"Monthly revenue: $120,000\".",
 
   /** Generic fallback for unexpected runtime errors. */
   generic: "An unexpected error occurred. Please try again.",
@@ -462,7 +754,7 @@ const STYLES = `
   .btn-primary:active:not(:disabled) { transform: translateY(0); }
   .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
 
-  /* Ghost reset link — styled as text, not a button */
+  /* Ghost reset link -  styled as text, not a button */
   .btn-reset {
     background: none;
     border: none;
@@ -527,6 +819,41 @@ const STYLES = `
     flex-shrink: 0;
     width: 18px;
     text-align: right;
+  }
+
+  /* ---- Audience tabs ---- */
+  .audience-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px;
+    width: fit-content;
+  }
+
+  .tab-btn {
+    padding: 8px 20px;
+    border: none;
+    border-radius: calc(var(--radius) - 2px);
+    background: none;
+    color: var(--text-muted);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+    white-space: nowrap;
+  }
+  .tab-btn:hover:not(.tab-btn--active) {
+    color: var(--text-secondary);
+    background: var(--surface-raised);
+  }
+  .tab-btn--active {
+    background: var(--accent);
+    color: #F4F0E4;
   }
 
   /* ---- Results section ---- */
@@ -654,9 +981,9 @@ const STYLES = `
  * Any accidental markdown code fences are stripped before parsing.
  *
  * @param {string} systemPrompt - System-level instruction for the model
- * @param {string} userMessage  - The user's content to analyze
- * @returns {Promise<Object>}   - Parsed JSON from the model's text response
- * @throws {Error}              - On network failure, non-OK status, or parse error
+ * @param {string} userMessage - The user's content to analyze
+ * @returns {Promise<Object>}  - Parsed JSON from the model's text response
+ * @throws {Error}             - On network failure, non-OK status, or parse error
  */
 async function callAnthropicAPI(systemPrompt, userMessage) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -664,7 +991,7 @@ async function callAnthropicAPI(systemPrompt, userMessage) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
+      max_tokens: 1500,
       system: systemPrompt,
       messages: [{ role: "user", content: userMessage }],
     }),
@@ -700,11 +1027,11 @@ async function callAnthropicAPI(systemPrompt, userMessage) {
  * Renders a single analysis result card with a copy-to-clipboard button.
  *
  * @param {Object} props
- * @param {number} props.index       - Zero-based index (used for aria and animation)
- * @param {number} props.number      - Display ordinal (1, 2, 3)
- * @param {string} props.title       - Card heading text
+ * @param {number} props.index      - Zero-based index (used for aria and animation)
+ * @param {number} props.number     - Display ordinal (1, 2, 3)
+ * @param {string} props.title      - Card heading text
  * @param {string} props.description - One-line descriptor shown under the title
- * @param {string} props.content     - AI-generated text content to display
+ * @param {string} props.content    - AI-generated text content to display
  */
 function ResultCard({ index, number, title, description, content }) {
   // Local state: tracks whether the user recently clicked Copy
@@ -721,7 +1048,7 @@ function ResultCard({ index, number, title, description, content }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard API may not be available in all environments — silent fail
+      // Clipboard API may not be available in all environments -  silent fail
     }
   }
 
@@ -790,6 +1117,10 @@ export default function MetaMetrics() {
   // Message to display in the error block
   const [errorMessage, setErrorMessage]         = useState("");
 
+  // Which audience tab is active in the results view
+  // "exec" = Executive Leadership | "simple" = The Simple Read
+  const [activeTab, setActiveTab]               = useState("exec");
+
   // Ref used to scroll the results section into view after rendering
   const resultsRef = useRef(null);
 
@@ -797,14 +1128,14 @@ export default function MetaMetrics() {
   // CORE ANALYSIS FUNCTION
   // A single unified function handles both the initial submission
   // and the resubmission after clarification. The "isSecondAttempt"
-  // boolean is passed as a parameter — NOT read from state —
+  // boolean is passed as a parameter -  NOT read from state - 
   // to avoid async state update timing issues.
   // ----------------------------------------------------------
 
   /**
    * Runs the two-step AI pipeline:
-   *   Step 1 — Interpretability check
-   *   Step 2 — Full analysis (only if step 1 passes)
+   *   Step 1 -  Interpretability check
+   *   Step 2 -  Full analysis (only if step 1 passes)
    *
    * GUARDRAIL: If isSecondAttempt is true and the input is still
    * uninterpretable, a terminal error is shown and the flow ends.
@@ -908,6 +1239,7 @@ export default function MetaMetrics() {
     setInClarificationFlow(false);
     setOutputData(null);
     setErrorMessage("");
+    setActiveTab("exec");
   }
 
   // ----------------------------------------------------------
@@ -940,7 +1272,7 @@ export default function MetaMetrics() {
     <>
       <style>{STYLES}</style>
 
-      {/* Gradient top border — caramel to burnt orange, matches Kontxt visual family */}
+      {/* Gradient top border -  caramel to burnt orange, matches Kontxt visual family */}
       <div className="gradient-top-border" aria-hidden="true" />
 
       <div className="app">
@@ -1136,6 +1468,7 @@ export default function MetaMetrics() {
             RESULTS SECTION
             Shown when: status === "result" and outputData is available.
             Each card animates in with a staggered delay.
+            Audience tabs switch between exec and plain-language views.
         ============================================================ */}
         {status === "result" && outputData && (
           <section
@@ -1145,10 +1478,34 @@ export default function MetaMetrics() {
           >
             <p className="results-eyebrow">Analysis Complete</p>
 
-            {/* Render one card per output section */}
-            {OUTPUT_SECTIONS.map((section, index) => (
+            {/* Audience tab switcher */}
+            <div
+              className="audience-tabs"
+              role="tablist"
+              aria-label="Choose summary style"
+            >
+              <button
+                role="tab"
+                aria-selected={activeTab === "exec"}
+                className={`tab-btn ${activeTab === "exec" ? "tab-btn--active" : ""}`}
+                onClick={() => setActiveTab("exec")}
+              >
+                Executive View
+              </button>
+              <button
+                role="tab"
+                aria-selected={activeTab === "simple"}
+                className={`tab-btn ${activeTab === "simple" ? "tab-btn--active" : ""}`}
+                onClick={() => setActiveTab("simple")}
+              >
+                The Simple Read
+              </button>
+            </div>
+
+            {/* Render cards for the active audience tab */}
+            {(activeTab === "exec" ? OUTPUT_SECTIONS : SIMPLE_SECTIONS).map((section, index) => (
               <ResultCard
-                key={section.key}
+                key={`${activeTab}-${section.key}`}
                 index={index}
                 number={index + 1}
                 title={section.title}
