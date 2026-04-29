@@ -564,6 +564,138 @@ const ERROR_MESSAGES = {
 };
 
 // ============================================================
+// SECTION 2B: LLM PROVIDER CONFIGURATION
+//
+// All provider-specific details are isolated here.
+// Nothing else in the codebase needs to change when switching.
+//
+// TO SWITCH PROVIDER: change ACTIVE_PROVIDER at the bottom
+// of this section to one of: "anthropic" | "openai" | "groq" | "gemini"
+//
+// TO USE A NON-ANTHROPIC PROVIDER: paste your API key into
+// the apiKey field of the relevant provider config below.
+// Anthropic does not need a key in the Claude artifact environment.
+// ============================================================
+
+const PROVIDER_CONFIG = {
+
+  anthropic: {
+    name: "Anthropic (Claude)",
+    url: "https://api.anthropic.com/v1/messages",
+    model: "claude-sonnet-4-20250514",
+    maxTokens: 2000,
+    apiKey: "", // No key needed - injected automatically in Claude artifact environment
+    buildRequest(systemPrompt, userMessage) {
+      return {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: this.maxTokens,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userMessage }],
+        }),
+      };
+    },
+    parseResponse(data) {
+      return data.content
+        .filter(b => b.type === "text")
+        .map(b => b.text)
+        .join("");
+    },
+  },
+
+  openai: {
+    name: "OpenAI",
+    url: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4o",
+    maxTokens: 2000,
+    apiKey: "", // Paste your OpenAI API key here
+    buildRequest(systemPrompt, userMessage) {
+      return {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: this.maxTokens,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+          ],
+        }),
+      };
+    },
+    parseResponse(data) {
+      return data.choices[0].message.content;
+    },
+  },
+
+  groq: {
+    name: "Groq",
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    model: "llama-3.3-70b-versatile",
+    maxTokens: 2000,
+    apiKey: "", // Paste your Groq API key here
+    buildRequest(systemPrompt, userMessage) {
+      return {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: this.maxTokens,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+          ],
+        }),
+      };
+    },
+    parseResponse(data) {
+      return data.choices[0].message.content;
+    },
+  },
+
+  gemini: {
+    name: "Google Gemini",
+    model: "gemini-1.5-pro",
+    maxTokens: 2000,
+    apiKey: "", // Paste your Gemini API key here
+    getUrl() {
+      return `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+    },
+    buildRequest(systemPrompt, userMessage) {
+      return {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            role: "user",
+            parts: [{ text: `${systemPrompt}\n\n${userMessage}` }],
+          }],
+          generationConfig: { maxOutputTokens: this.maxTokens },
+        }),
+      };
+    },
+    parseResponse(data) {
+      return data.candidates[0].content.parts[0].text;
+    },
+  },
+
+};
+
+// -------------------------------------------------------
+// Change this one value to switch providers.
+// Options: "anthropic" | "openai" | "groq" | "gemini"
+// -------------------------------------------------------
+const ACTIVE_PROVIDER = "anthropic";
+
+// ============================================================
 // SECTION 3: STYLES
 // All CSS defined as a template literal injected via <style>.
 // Uses CSS custom properties (variables) for theming so any
@@ -1169,46 +1301,31 @@ const STYLES = `
 // ============================================================
 
 /**
- * Calls the Anthropic API with a system prompt and user message.
- * Returns a parsed JSON object from the model's response.
+ * Calls the active LLM provider with a system prompt and user message.
+ * Provider details are read from PROVIDER_CONFIG[ACTIVE_PROVIDER].
+ * Returns a parsed JSON object from the model's text response.
  *
- * IMPORTANT: The model is always instructed to return only JSON.
- * Any accidental markdown code fences are stripped before parsing.
+ * Each provider isolates its own: URL, request body shape, auth headers,
+ * and response parser. Nothing here needs to change when switching providers.
  *
  * @param {string} systemPrompt - System-level instruction for the model
- * @param {string} userMessage - The user's content to analyze
- * @returns {Promise<Object>}  - Parsed JSON from the model's text response
- * @throws {Error}             - On network failure, non-OK status, or parse error
+ * @param {string} userMessage  - The user's content to analyze
+ * @returns {Promise<Object>}   - Parsed JSON from the model's text response
+ * @throws {Error}              - On network failure, non-OK status, or parse error
  */
-async function callAnthropicAPI(systemPrompt, userMessage) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }],
-    }),
-  });
+async function callLLM(systemPrompt, userMessage) {
+  const provider = PROVIDER_CONFIG[ACTIVE_PROVIDER];
+  const url      = provider.getUrl ? provider.getUrl() : provider.url;
+  const options  = provider.buildRequest(systemPrompt, userMessage);
 
-  if (!response.ok) {
-    // Throw with status code so the caller can log or inspect if needed
-    throw new Error(`API error: HTTP ${response.status}`);
-  }
+  const response = await fetch(url, options);
+  if (!response.ok) throw new Error(`API error: HTTP ${response.status}`);
 
-  const data = await response.json();
+  const data    = await response.json();
+  const rawText = provider.parseResponse(data);
 
-  // Concatenate all text blocks from the response
-  const rawText = data.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("");
-
-  // Strip any accidental markdown code fences (```json ... ```) before parsing.
-  // This prevents JSON.parse failures due to model formatting quirks.
+  // Strip any accidental markdown code fences before parsing.
   const cleaned = rawText.replace(/```json|```/gi, "").trim();
-
   return JSON.parse(cleaned);
 }
 
@@ -1516,7 +1633,7 @@ export default function MetaMetrics() {
         ? `Original metrics input:\n${inputText}\n\nUser's clarification answers:\n${clarificationAnswers}`
         : inputText;
 
-      const checkResult = await callAnthropicAPI(
+      const checkResult = await callLLM(
         INTERPRETABILITY_SYSTEM_PROMPT,
         messageForCheck
       );
@@ -1545,7 +1662,7 @@ export default function MetaMetrics() {
         ? `Metrics input:\n${inputText}\n\nAdditional context from user:\n${clarificationAnswers}`
         : inputText;
 
-      const analysisResult = await callAnthropicAPI(
+      const analysisResult = await callLLM(
         ANALYSIS_SYSTEM_PROMPT,
         messageForAnalysis
       );
